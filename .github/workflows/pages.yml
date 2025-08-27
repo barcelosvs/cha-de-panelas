@@ -10,18 +10,22 @@ jobs:
     runs-on: ubuntu-latest
     env:
       API_BASE_URL: ${{ secrets.API_BASE_URL }}
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Install deps
-        run: cd frontend && npm ci
+        run: npm ci
       - name: Build
-        run: cd frontend && VITE_API_URL=${API_BASE_URL}/api npm run build
+        run: VITE_API_URL=${API_BASE_URL}/api npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
