@@ -20,7 +20,6 @@ services:
       - ./frontend:/app/frontend
     environment:
       - VITE_API_URL=http://localhost:5000/api
-
 # Uso:
 # Desenvolvimento:
 #   export ALLOWED_ORIGIN=http://localhost:5173
