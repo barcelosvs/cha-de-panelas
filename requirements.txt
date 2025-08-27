@@ -2,6 +2,3 @@ flask
 flask-cors
 bcrypt
 flask-limiter
-pytest
-mypy
-ruff

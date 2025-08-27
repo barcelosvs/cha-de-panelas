@@ -48,4 +48,15 @@ export const api = {
     fetchJSON("/admin/stats", {
       headers: { "X-Admin-Password": adminPassword || "" },
     }),
+  stream: (onMessage) => {
+    const url = API.replace(/\/$/, "") + "/stream";
+    const es = new EventSource(url);
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        onMessage && onMessage(data);
+      } catch (_) {}
+    };
+    return es;
+  },
 };

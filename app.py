@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify # type: ignore
+from flask import Flask, request, jsonify, Response # type: ignore
 from flask_cors import CORS # type: ignore
 from db import init_db, list_itens_disponiveis, list_convidados, create_convidado, escolher_item, liberar_item, get_stats, remover_convidado, check_nome_exists
 import os
@@ -7,6 +7,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import logging, json, time
 from functools import wraps
+from hashlib import sha1
+import queue, threading
 
 # Config
 ADMIN_PASSWORD_PLAIN = os.environ.get('ADMIN_PASSWORD', 'admin1308')
@@ -55,14 +57,8 @@ def check_admin(pw: str | None) -> bool:
     except Exception:
         return False
 
-@app.get('/api/status')
-def status():
-    stats = get_stats()
-    stats['itens_disponiveis_list'] = list_itens_disponiveis()
-    return jsonify(stats)
-
 _itens_cache = { 'data': None, 'ts': 0 }
-_ITENS_TTL = 15  # segundos
+_ITENS_TTL = int(os.environ.get('ITENS_TTL', '15'))  # segundos
 
 def cached_itens():
     now = time.time()
@@ -73,9 +69,39 @@ def cached_itens():
     _itens_cache['ts'] = now
     return data
 
+_etag_items = None
+_etag_status = None
+
+def _update_etags():
+    global _etag_items, _etag_status
+    _etag_items = 'W/"' + sha1(json.dumps(_itens_cache['data'] or [], sort_keys=True, ensure_ascii=False).encode()).hexdigest() + '"'
+    # status inclui stats + itens
+    status_payload = {
+        **get_stats(),
+        'itens_disponiveis_list': _itens_cache['data'] or []
+    }
+    _etag_status = 'W/"' + sha1(json.dumps(status_payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest() + '"'
+
+listeners = []
+listeners_lock = threading.Lock()
+
+def broadcast(event: dict):
+    with listeners_lock:
+        dead = []
+        for q in listeners:
+            try:
+                q.put_nowait(event)
+            except Exception:
+                dead.append(q)
+        for d in dead:
+            if d in listeners:
+                listeners.remove(d)
+
 def invalidate_itens_cache():
     _itens_cache['data'] = None
     _itens_cache['ts'] = 0
+    broadcast({'type': 'itens_update'})
+    # etags recalculados quando recarregar
 
 @app.before_request
 def _req_log():
@@ -89,7 +115,32 @@ def _after(resp):
 
 @app.get('/api/itens')
 def get_itens():
-    return jsonify(cached_itens())
+    data = cached_itens()
+    _update_etags()
+    inm = request.headers.get('If-None-Match')
+    if inm and inm == _etag_items:
+        resp = app.response_class(status=304)
+    else:
+        resp = jsonify(data)
+    resp.headers['Cache-Control'] = f'public, max-age={_ITENS_TTL}'
+    resp.headers['ETag'] = _etag_items
+    return resp
+
+@app.get('/api/status')
+def status():
+    data = {
+        **get_stats(),
+        'itens_disponiveis_list': cached_itens()
+    }
+    _update_etags()
+    inm = request.headers.get('If-None-Match')
+    if inm and inm == _etag_status:
+        resp = app.response_class(status=304)
+    else:
+        resp = jsonify(data)
+    resp.headers['Cache-Control'] = f'public, max-age={_ITENS_TTL}'
+    resp.headers['ETag'] = _etag_status
+    return resp
 
 @app.get('/api/convidados')
 def get_convidados():
@@ -119,6 +170,31 @@ def rsvp():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
+@app.get('/api/stream')
+def stream():
+    def gen():
+        q: queue.Queue = queue.Queue()
+        with listeners_lock:
+            listeners.append(q)
+        # evento inicial
+        yield 'data: {"type":"hello"}\n\n'
+        try:
+            while True:
+                try:
+                    data = q.get(timeout=15)  # espera evento até 15s
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except queue.Empty:
+                    # heartbeat para manter conexão viva em proxies
+                    yield 'data: {"type":"ping"}\n\n'
+        except GeneratorExit:
+            with listeners_lock:
+                if q in listeners:
+                    listeners.remove(q)
+    return Response(gen(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no'
+    })
+
 @app.post('/api/escolha')
 def escolha():
     data = request.get_json(force=True)
@@ -132,6 +208,7 @@ def escolha():
         return jsonify({"ok": False, "error": "Item já foi escolhido por outra pessoa"}), 409
     invalidate_itens_cache()
     app.logger.info(f'Escolha registrada convidado={convidado_id} item={item_id}')
+    broadcast({'type': 'stats_update'})
     return jsonify({"ok": True})
 
 @app.post('/api/admin/reset')
@@ -157,6 +234,7 @@ def admin_liberar():
         return jsonify({'ok': False, 'error': 'Nada para liberar'}), 400
     invalidate_itens_cache()
     app.logger.info(f'Item liberado convidado={convidado_id}')
+    broadcast({'type': 'stats_update'})
     return jsonify({'ok': True})
 
 @app.post('/api/admin/remover')
@@ -173,6 +251,7 @@ def admin_remover():
         return jsonify({'ok': False, 'error': 'Convidado não encontrado'}), 404
     invalidate_itens_cache()
     app.logger.info(f'Convidado removido id={convidado_id}')
+    broadcast({'type': 'stats_update'})
     return jsonify({'ok': True})
 
 @app.get('/api/admin/stats')

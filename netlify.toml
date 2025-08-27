@@ -1,0 +1,36 @@
+# Netlify configuration for deploying the React frontend
+# Ajuste o domínio do backend (variável BACKEND_API) ou use redirect abaixo apontando para seu backend.
+
+[build]
+  command = "npm run build --prefix frontend"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Opcional: defina aqui (ou no painel) a URL do backend.
+  # Ex: VITE_API_URL = "https://seu-backend.fly.dev/api"
+
+# Reescritas /api -> backend (mantém suporte SSE). Substitua o domínio abaixo.
+[[redirects]]
+  from = "/api/*"
+  to = "https://seu-backend.fly.dev/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Caching estático para assets gerados
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Desabilitar cache agressivo para index.html (SPA shell)
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

@@ -1,20 +1,39 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
-// Define base automaticamente em CI (GitHub Pages) usando nome do repositório
-const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1];
-const isCI = !!process.env.GITHUB_ACTIONS;
-
-export default defineConfig({
-  base: isCI && repoName ? `/${repoName}/` : '/',
-  plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      "/api": {
-        target: "http://localhost:5000",
-        changeOrigin: true,
+// https://vitejs.dev/config/
+export default defineConfig(({ command, mode }) => {
+  return {
+    base: '/',
+    plugins: [react()],
+    cacheDir: '.vite-cache',
+    build: {
+      target: 'es2018',
+      cssCodeSplit: true,
+      sourcemap: false,
+      assetsInlineLimit: 4096,
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            react: ['react', 'react-dom'],
+          },
+        },
       },
     },
-  },
+    server: {
+      port: 5173,
+      proxy: {
+        '/api/stream': {
+          target: 'http://localhost:5000',
+          changeOrigin: true,
+          ws: false,
+        },
+        '/api': {
+          target: 'http://localhost:5000',
+          changeOrigin: true,
+        },
+      },
+    },
+  };
 });
