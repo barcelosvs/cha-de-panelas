@@ -6,7 +6,7 @@ services:
       - "5000:5000"
     environment:
       - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
-      - ALLOWED_ORIGIN=http://localhost:5173
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:5173}
     volumes:
       - ./cha_panelas.db:/app/cha_panelas.db
     restart: unless-stopped
@@ -20,3 +20,11 @@ services:
       - ./frontend:/app/frontend
     environment:
       - VITE_API_URL=http://localhost:5000/api
+
+# Uso:
+# Desenvolvimento:
+#   export ALLOWED_ORIGIN=http://localhost:5173
+#   docker compose up --build
+# Produção (GitHub Pages):
+#   export ALLOWED_ORIGIN=https://barcelosvs.github.io/cha-de-panelas
+#   docker compose up -d
